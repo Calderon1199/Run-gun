@@ -1,8 +1,9 @@
 import pygame
 from support import import_folder
+from math import sin
 
 class Player(pygame.sprite.Sprite):
-	def __init__(self,pos):
+	def __init__(self,pos,surface,create_jump_particles,change_health):
 		super().__init__()
 		self.import_character_assets()
 		self.frame_index = 0
@@ -10,11 +11,19 @@ class Player(pygame.sprite.Sprite):
 		self.image = self.animations['idle'][self.frame_index]
 		self.rect = self.image.get_rect(topleft = pos)
 
+		#DUST
+		self.import_dust_run_particles()
+		self.dust_frame_index = 0
+		self.dust_animation_speed = 0.15
+		self.display_surface = surface
+		self.create_jump_particles = create_jump_particles
+
 		#PLAYER MOVEMENT
 		self.direction = pygame.math.Vector2(0,0)
-		self.speed = 4
-		self.gravity = 0.8
-		self.jump_speed = -16
+		self.speed = 5
+		self.gravity = 0.9
+		self.jump_speed = -12
+		self.collision_rect = pygame.Rect(self.rect.topright,(20,self.rect.height + 5))
 
 		#PLAYER STATUS
 		self.staus = 'idle'
@@ -24,13 +33,26 @@ class Player(pygame.sprite.Sprite):
 		self.on_left = False
 		self.on_right = False
 
+		#HEALTH
+		self.change_health = change_health
+		self.recover = False
+		self.recover_time = 2000
+		self.impact_time = 0
+
+		#SOUNDS
+		self.jump_sound = pygame.mixer.Sound('audio/effects/jump.wav')
+		self.hurt_sound = pygame.mixer.Sound('audio/effects/hurt.wav')
+
 	def import_character_assets(self):
-		character_path = ('images/player/')
+		character_path = 'images/player/'
 		self.animations = {'idle':[],'run':[],'jump':[]}
 
 		for animation in self.animations.keys():
 			full_path = character_path + animation
 			self.animations[animation] = import_folder(full_path)
+
+	def import_dust_run_particles(self):
+		self.dust_run_particles = import_folder('images/player/dust/run')
 
 	def animate(self):
 		animation = self.animations[self.status]
@@ -42,19 +64,37 @@ class Player(pygame.sprite.Sprite):
 		image = animation[int(self.frame_index)]
 		if self.facing_right:
 			self.image = image
+			self.rect.bottomright = self.collision_rect.bottomright
 		else:
 			flipped_image = pygame.transform.flip(image,True,False)
 			self.image = flipped_image
+			self.rect.bottomleft = self.collision_rect.bottomleft
 
-		#SET RECTANGLE
-		if self.on_ground:
-			self.rect = self.image.get_rect(midbottom = self.rect.midbottom)
-		elif self.on_ceiling:
-			self.rect = self.image.get_rect(midtop = self.rect.midtop)
+		if self.recover:
+			alpha = self.wave_value()
+			self.image.set_alpha(alpha)
 		else:
-			self.image.get_rect(center = self.rect.center)
+			self.image.set_alpha(255)
+
+		self.rect = self.image.get_rect(midbottom = self.rect.midbottom)
 
 
+	def dust_run_animation(self):
+		if self.status == 'run' and self.on_ground:
+			self.dust_frame_index += self.dust_animation_speed
+			if self.dust_frame_index >= len(self.dust_run_particles):
+				self.dust_frame_index = 0
+
+			dust_particle = self.dust_run_particles[int(self.dust_frame_index)]
+
+			if self.facing_right:
+				pos = self.rect.bottomleft - pygame.math.Vector2(6,10)
+				self.display_surface.blit(dust_particle,pos)
+			else:
+				pos = self.rect.bottomright - pygame.math.Vector2(6,10)
+				flipped_dust_particle = pygame.transform.flip(dust_particle,True,False)
+				self.display_surface.blit(flipped_dust_particle,pos)
+		
 
 	def get_input(self):
 		keys = pygame.key.get_pressed()
@@ -70,6 +110,7 @@ class Player(pygame.sprite.Sprite):
 
 		if keys[pygame.K_SPACE] and self.on_ground:
 			self.jump()
+			self.create_jump_particles(self.rect.midbottom)
 
 	def get_status(self):
 		if self.direction.y < 0:
@@ -85,12 +126,34 @@ class Player(pygame.sprite.Sprite):
 
 	def apply_gravity(self):
 		self.direction.y += self.gravity
-		self.rect.y += self.direction.y
+		self.collision_rect.y += self.direction.y
 
 	def jump(self):
 		self.direction.y = self.jump_speed
-	
+		self.jump_sound.play()
+
+	def get_damage(self):
+		if not self.recover:
+			self.hurt_sound.play()
+			self.change_health(-50)
+			self.recover = True
+			self.impact_time = pygame.time.get_ticks()
+
+	def recover_timer(self):
+		if self.recover:
+			current_time = pygame.time.get_ticks()
+			if current_time - self.impact_time >= self.recover_time:
+				self.recover = False
+
+	def wave_value(self):
+		value = sin(pygame.time.get_ticks())
+		if value >= 0: return 255
+		else: return 0
+
 	def update(self):
 		self.get_input()
 		self.get_status()
 		self.animate()
+		self.dust_run_animation()
+		self.recover_timer()
+		self.wave_value()
